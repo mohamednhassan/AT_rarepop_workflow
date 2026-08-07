@@ -1,0 +1,164 @@
+---
+title: "Integration Scenarios"
+date: "`r format(Sys.time(),  '%d %B %Y')`"
+author: "Mohamed Hassan"
+output:
+  html_notebook:
+    theme: cerulean
+    toc: true
+    toc_depth: 3
+editor_options:
+  markdown:
+    wrap: 72
+---
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = T, results = "hide")
+require("knitr")
+# opts_knit$set(root.dir = "/")
+```
+```{r random-seed-setting}
+set.seed(12345)
+```
+```{r loading-libraries, results='hide'}
+pacman::p_load(tidyverse, Seurat, styler, remotes)
+```
+
+# 1.
+
+
+```{r}
+In_House_merged <- readRDS("~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Ambient_RNA/CellBender/In_House_Integrated.RDS")
+In_House_merged
+```
+
+
+```{r}
+pacman::p_load(tidyverse, stringr)
+```
+
+
+
+```{r}
+top2000 <- head(VariableFeatures(In_House_merged), 2000)
+In_House_merged_dwn <- In_House_merged[top2000]
+```
+
+
+```{r}
+library(reticulate)
+use_condaenv("/home/mhassan/miniconda3/envs/scvi-env", required = T)
+scvi <- import("scvi", convert = T)
+```
+
+
+```{r}
+adata <- sceasy::convertFormat(In_House_merged_dwn, from = "seurat", to = "anndata",
+                       main_layer = "counts", drop_single_values=FALSE)
+print(adata)
+```
+
+
+```{r}
+scvi$model$SCVI$setup_anndata(adata, batch_key = 'samples')
+```
+
+```{r}
+# create the model
+model = scvi$model$SCVI(adata)
+
+# train the model
+model$train(max_epochs = as.integer(400))
+```
+
+
+```{r}
+# get the latent represenation
+latent = model$get_latent_representation()
+
+# put it back in our original Seurat object
+latent <- as.matrix(latent)
+rownames(latent) = colnames(In_House_merged_dwn)
+
+In_House_merged[["scvi"]] <- CreateDimReducObject(embeddings = latent, 
+                                                      key = "scvi_", 
+                                                      assay = DefaultAssay(In_House_merged))
+```
+
+
+```{r}
+library(cowplot)
+
+In_House_merged <- RunUMAP(In_House_merged, 
+                               dims = 1:10, reduction = "scvi", n.components = 2,                       reduction.name = "scvi_umap")
+DimPlot(In_House_merged, reduction = "scvi_umap", group.by = "samples", raster = F)
+```
+
+
+```{r}
+saveRDS(In_House_merged, "~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Integration/Scenarios/scVI/In_House_Integrated_scVI.RDS")
+saveRDS(latent, "~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Integration/Scenarios/scVI/scVI_latent_mtx.RDS")
+```
+
+
+## Integrations with CCA, rPCA, and harmony
+```{r}
+In_House_merged[["RNA"]] <- split(In_House_merged[["RNA"]], f = In_House_merged$samples)
+In_House_merged
+```
+
+
+```{r}
+In_House_merged <- In_House_merged %>% 
+  NormalizeData() %>% 
+  FindVariableFeatures() %>%
+  ScaleData() %>% 
+  RunPCA()
+```
+
+
+```{r}
+In_House_merged <- FindNeighbors(In_House_merged, dims = 1:30, reduction = "pca")
+In_House_merged <- FindClusters(In_House_merged, resolution = 0.1, cluster.name = "unintegrated_clusters")
+```
+
+
+```{r}
+DimPlot(In_House_merged, reduction = "unintegrated_umap", raster = F, group.by = "samples")
+```
+
+```{r}
+In_House_merged <- IntegrateLayers(
+  object = In_House_merged, method = CCAIntegration,
+  orig.reduction = "pca", new.reduction = "integrated.cca",
+  verbose = T
+)
+```
+
+
+```{r}
+In_House_merged <- IntegrateLayers(
+  object = In_House_merged, method = RPCAIntegration,
+  orig.reduction = "pca", new.reduction = "integrated.rpca",
+  verbose = T
+)
+```
+
+
+
+```{r}
+In_House_merged <- IntegrateLayers(
+  object = In_House_merged, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "integrated.harmony",
+  verbose = T
+)
+```
+
+
+
+```{r}
+saveRDS(In_House_merged, "~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Integration/Scenarios/InHouse_Integrated_all_scenarios.RDS")
+```
+
+
+
+
