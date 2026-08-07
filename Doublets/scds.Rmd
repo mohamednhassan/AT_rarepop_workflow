@@ -1,0 +1,710 @@
+---
+title: "scds"
+date: "`r format(Sys.time(),  '%d %B %Y')`"
+author: "Mohamed Hassan"
+output: 
+  html_notebook:
+    theme: cerulean
+    toc: true
+    toc_depth: 3
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = T, results = "hide")
+require("knitr")
+opts_knit$set(root.dir = "/home/mhassan/")
+```
+
+```{r random-seed-setting}
+set.seed(12345)
+```
+
+```{r loading-libraries, results='hide'}
+pacman::p_load(tidyverse, Seurat, patchwork, scds, SingleCellExperiment)
+```
+
+```{r}
+In_House <- readRDS("/home/mhassan/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/InHouse_merged.RDS")
+In_House
+```
+
+
+```{r}
+sce <- as.SingleCellExperiment(In_House)
+```
+
+
+# Run scds
+
+```{r}
+## RUn co-expression baed graph doublet scoring
+sce <- cxds(sce, retRes = TRUE, estNdbl=TRUE)
+```
+
+```{r}
+#- Annotate doublet using binary classification based doublet scoring:
+sce <- bcds(sce, retRes = TRUE, estNdbl=TRUE)
+```
+
+```{r}
+#- Combine both annotations into a hybrid annotation
+sce <- cxds_bcds_hybrid(sce, estNdbl=TRUE)
+```
+
+
+```{r}
+#- Doublet scores are now available via colData:
+CD  = colData(sce)
+head(cbind(CD$cxds_score,CD$bcds_score, CD$hybrid_score))
+
+```
+
+
+```{r}
+summary <- as.data.frame(table(Doublets$scds_DropletType))
+colnames(summary) <- c("Classification", "Droplet N")
+write_delim(summary, 
+            "/home/mhassan/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/scds_doublets_singlets.tsv")
+```
+
+
+```{r}
+Doublets <- as.data.frame(cbind(rownames(colData(sce)), 
+                                colData(sce)$hybrid_score, 
+                                colData(sce)$hybrid_call))
+
+
+## Doublet scores are now available via colData:
+colnames(Doublets) <- c("Barcode","scds_score","scds_DropletType")
+Doublets$scds_DropletType <- gsub("FALSE","singlet",Doublets$scds_DropletType)
+Doublets$scds_DropletType <- gsub("TRUE","doublet",Doublets$scds_DropletType)
+
+write_tsv(Doublets, 
+          "/home/mhassan/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/scds_doublets_singlets.tsv")
+```
+
+```{r}
+head(Doublets)
+```
+
+```{r}
+In_House <- AddMetaData(In_House, metadata = Doublets)
+```
+
+```{r}
+In_House@meta.data %>% 
+  as.data.frame() %>% 
+  write_tsv("/home/mhassan/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/InHouse_df_scds_res.tsv")
+```
+
+
+```{r}
+In_House$cxds_score <- sce$cxds_score
+In_House$cxds_call <- sce$cxds_call
+In_House$bcds_score <- sce$bcds_score
+In_House$bcds_call <- sce$bcds_call
+In_House$hybrid_score <- sce$hybrid_score
+In_House$hybrid_call <- sce$hybrid_call
+```
+
+
+## Plots for the paper 
+```{r}
+hist(as.numeric(In_House$scds_score))
+```
+
+```{r}
+hist(as.numeric(In_House$cxds_score))
+```
+
+
+```{r}
+hist(as.numeric(In_House$bcds_score))
+```
+
+
+```{r}
+hist(as.numeric(In_House$hybrid_score))
+```
+
+
+```{r}
+obj_before_doub_rem <- In_House
+obj_before_doub_rem
+```
+
+## Filtering doublets
+```{r}
+In_House
+In_House <- subset(In_House, scds_DropletType == "singlet")
+In_House
+```
+
+Number of doublets removed are `r ncol(obj_before_doub_rem) - ncol(In_House)`
+
+```{r}
+FeatureScatter(In_House,
+               feature1 = "nCount_RNA",
+               feature2 = "nFeature_RNA", 
+               group.by = "orig.ident", raster = F)
+```
+
+
+## Filtering outliers
+```{r}
+In_House
+In_House <- subset(In_House, 
+                   nCount_RNA < 20000 &
+                   nFeature_RNA < 10000)
+In_House
+```
+
+
+```{r}
+FeatureScatter(In_House,
+               feature1 = "nCount_RNA",
+               feature2 = "nFeature_RNA", 
+               group.by = "orig.ident", raster = F)
+```
+
+
+# Adding metadata information
+```{r}
+library(dplyr)
+library(tibble)
+
+# Sample-level metadata
+sample_metadata <- tribble(
+  ~orig.ident, ~Condition,         ~gender,  ~BMI,  ~Age,
+  "SAT1",      "Obese",            "male",   41.7,  43,
+  "SAT4",      "Obese",            "male",   49.7,  30,
+  "SAT9",      "Obese",            "female", 39.5,  37,
+  "SAT10",     "Diabetic Obese",   "female", 61.5,  41,
+  "SAT13",     "Lean",             "female", 23.0,  42,
+  "SAT17",     "Diabetic Obese",   "female", 52.6,  34,
+  "SAT18",     "Obese",            "female", 61.3,  29,
+  "SAT22",     "Diabetic Obese",   "male",   39.7,  50,
+  "SAT34",     "Obese",            "male",   62.5,  40,
+  "SAT39",     "Obese",            "male",   61.2,  41,
+  "SAT51",     "Obese",            "female", 57.0,  44,
+  "SAT54",     "Lean",             "female", 22.3,  61,
+  "SAT58",     "Lean",             "male",   24.3,  54,
+  "SAT60",     "Lean",             "male",   23.5,  26
+)
+
+# Convert to lookup table indexed by sample ID
+sample_metadata_df <- sample_metadata %>%
+  column_to_rownames("orig.ident")
+
+# Match sample metadata to each cell using orig.ident
+cell_metadata <- sample_metadata_df[In_House$orig.ident, , drop = FALSE]
+rownames(cell_metadata) <- colnames(In_House)
+```
+
+
+```{r}
+# Add metadata back to Seurat object
+In_House <- AddMetaData(In_House, metadata = cell_metadata)
+```
+
+
+################################################################################
+################################################################################
+
+
+# Analysis
+
+
+```{r}
+DefaultAssay(In_House) <- "RNA"
+```
+
+## Adding Cell cycle score
+```{r}
+In_House <- CellCycleScoring(In_House, 
+                                   s.features = Seurat::cc.genes$s.genes, 
+                                   g2m.features = Seurat::cc.genes$g2m.genes)
+```
+
+
+## Data Processing
+```{r}
+DefaultAssay(In_House)<- "RNA"
+In_House <- NormalizeData(In_House, normalization.method = "LogNormalize", 
+                                scale.factor = 10000)
+In_House <-  FindVariableFeatures(In_House, selection.method = "vst", 
+                                        nfeatures = 2000)
+In_House <-  ScaleData(In_House)
+```
+
+
+```{r}
+In_House <-  RunPCA(In_House, features = VariableFeatures(object = In_House), ndims.print = 1:40)
+```
+
+
+```{r}
+ElbowPlot(In_House, ndims = 50)
+
+### Determining the number of significant PCs
+pct <- In_House@reductions$pca@stdev / sum(In_House@reductions$pca@stdev) * 100
+cum <- cumsum(pct)
+co1 <- which(cum > 90 & pct < 5)[1]
+co2 <- sort(which((pct[1:length(pct) -1] - pct[2:length(pct)]) > 0.05), decreasing = T)[1] + 1
+pcs = min(co1, co2)
+sig_pcs <- 1:pcs
+sig_pcs
+```
+
+
+```{r}
+In_House <- FindNeighbors(In_House,
+                          reduction = "pca", dims = c(1:30))
+In_House <- RunUMAP(In_House, dims = c(1:30))
+```
+
+
+```{r, fig.width=21, fig.height=7}
+DimPlot(In_House, 
+         group.by = c("orig.ident", "Phase"), 
+         raster = F) + NoLegend()
+```
+
+```{r}
+DimPlot(In_House, 
+         group.by = "orig.ident", 
+         raster = F)
+```
+
+
+
+```{r, eval=FALSE}
+saveRDS(In_House, "~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/In_House_CB_scds_UnInt.RDS")
+```
+
+
+# 3. Integration (Removing batch effect)
+```{r}
+library(harmony)
+In_House$orig.ident <- as.factor(In_House$orig.ident)
+
+## Adding samples column for integration
+In_House$samples<- as.character(In_House$orig.ident)
+
+# Running the integration with Harmony
+In_House_Integrated <- RunHarmony(In_House, 
+                             group.by.vars= "samples", 
+                             verbose = T, assay.use= "RNA",
+                             max.iter.harmony = 100)
+
+ElbowPlot(In_House_Integrated, reduction =  "pca", ndims = 50) +  ElbowPlot(In_House_Integrated, reduction =  "harmony", ndims = 50)
+
+
+### Determining the number of significant PCs
+pct <- In_House_Integrated@reductions$harmony@stdev / sum(In_House_Integrated@reductions$harmony@stdev) * 100
+cum <- cumsum(pct)
+co1 <- which(cum > 90 & pct < 5)[1]
+co2 <- sort(which((pct[1:length(pct) -1] - pct[2:length(pct)]) > 0.05), decreasing = T)[1] + 1
+pcs = min(co1, co2)
+harmony_sig_pcs <- 1:pcs
+harmony_sig_pcs
+```
+
+
+```{r}
+In_House_Integrated <- RunUMAP(In_House_Integrated, 
+                             dims = c(1:30),
+                             reduction = "harmony", verbose = T)
+```
+
+
+## Checking the quality of integration
+```{r}
+DimPlot(In_House_Integrated, group.by = "orig.ident", raster= F)
+```
+
+
+
+```{r, fig.height = 10}
+# UMAP split by sample
+DimPlot(In_House_Integrated, split.by ="orig.ident",group.by= "orig.ident", raster = F,ncol = 5)
+```
+
+
+
+```{r}
+In_House_Integrated<- FindNeighbors(In_House_Integrated, dims = c(1:30), 
+                                    reduction = "harmony", verbose = FALSE)
+res <- seq(0.1, 1, by=0.1)
+In_House_Integrated <- FindClusters(In_House_Integrated, verbose = T, 
+                                    resolution = res)
+```
+
+
+## Selecting optimal resolution based on clustree
+```{r, eval=FALSE, fig.width=10, fig.height=10}
+library(clustree)
+Clustree_Plot <- clustree::clustree(In_House_Integrated)
+Clustree_Plot
+```
+
+
+
+
+```{r}
+In_House_Integrated@meta.data <- In_House_Integrated@meta.data %>% 
+  relocate(RNA_snn_res.0.8, .before = RNA_snn_res.0.9)
+```
+
+
+```{r, fig.width=20, fig.height=15}
+DimPlot(In_House_Integrated, 
+         group.by = grep(pattern = "^RNA_snn", 
+                         x = colnames(In_House_Integrated@meta.data)), 
+         label = T, ncol = 4, raster = F) & NoLegend()
+```
+
+
+```{r, fig.width=10}
+DotPlot(In_House_Integrated, 
+        features = c("PECAM1", "CDH5", "VWF", "MECOM",
+                     "MMRN1", "PROX1", "MYH11", 
+                     "CARMN", "STEAP4", "MRC1", "IL7R", "APOD", "PLIN1", 
+                     "MSR1"),
+        group.by = "RNA_snn_res.0.1")
+```
+
+
+```{r}
+DimPlot(In_House_Integrated, 
+        group.by = "RNA_snn_res.0.1", 
+        raster = F, label = T, 
+        repel = T)
+```
+
+```{r}
+Idents(In_House_Integrated) <- In_House_Integrated$RNA_snn_res.0.1
+top_markers_res01 <- FindAllMarkers(In_House_Integrated, only.pos = T)
+```
+
+
+
+```{r}
+saveRDS(In_House_Integrated, "/home/mhassan/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/In_House_Integrated.RDS")
+```
+
+
+
+```{r}
+new_names = c(
+'0' = 'ASPCs',
+'1' = 'Macro_Mono',
+'2' = 'ECs',
+'3' = 'Adipocytes',
+'4' = 'Mural',
+'5' = 'T_NK',
+'6' = 'ECs',
+'7' = 'Mast',
+'8' = 'LECs',
+'9' = 'Prolif'
+)
+
+Idents(In_House_Integrated) <- In_House_Integrated$RNA_snn_res.0.1
+
+In_House_Integrated$celltype_annotation <- recode(Idents(In_House_Integrated),
+                                                  !!!new_names)
+```
+
+
+```{r}
+DimPlot(In_House_Integrated, group.by = "celltype_annotation", label = T, repel = T, raster = F) + NoLegend()
+```
+
+
+```{r}
+Idents(In_House_Integrated) <- "celltype_annotation"
+markers_main_aft_ann <- FindAllMarkers(In_House_Integrated, only.pos = T)
+```
+
+
+```{r}
+writexl::write_xlsx(markers_main_aft_ann, "~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/MainObj_markers_aft_ann.xlsx")
+```
+
+
+
+
+
+# 2. Subsetting the Vascular cells (Endothelial cells, pericytes, and VSMCs)
+```{r}
+Idents(In_House_Integrated) <- In_House_Integrated$celltype_annotation
+VascularObj <- subset(In_House_Integrated, 
+                      celltype_annotation %in% c("Mural", "ECs", "LECs"))
+VascularObj
+```
+
+
+```{r}
+UMAPPlot(VascularObj, label = T)
+```
+
+```{r, fig.width=10, fig.height=12}
+FeaturePlot(VascularObj, features = c("CDH5", "PECAM1", "MYH11", "RGS6", "PROX1", "MMRN1"), order = T)
+```
+
+
+
+```{r}
+DefaultAssay(VascularObj) <- "RNA"
+```
+
+
+## Preprocessing the Vascular object
+```{r}
+VascularObj <- NormalizeData(VascularObj, normalization.method = "LogNormalize", 
+                             scale.factor = 10000)
+VascularObj <-  FindVariableFeatures(VascularObj, selection.method = "vst", nfeatures = 2000)
+VascularObj <-  ScaleData(VascularObj)
+VascularObj<-  RunPCA(VascularObj, ndims.print = 1:50)
+```
+
+
+```{r}
+ElbowPlot(VascularObj, ndims = 50)
+```
+
+
+```{r}
+### Determining the number of significant PCs
+pct <- VascularObj@reductions$pca@stdev / sum(VascularObj@reductions$pca@stdev) * 100
+cum <- cumsum(pct)
+co1 <- which(cum > 90 & pct < 5)[1]
+co2 <- sort(which((pct[1:length(pct) -1] - pct[2:length(pct)]) > 0.05), decreasing = T)[1] + 1
+pcs = min(co1, co2)
+vasc_sig_pcs <- 1:pcs
+vasc_sig_pcs
+```
+
+
+```{r}
+VascularObj <- FindNeighbors(VascularObj, dims = c(1:30))
+```
+
+```{r}
+VascularObj <- RunUMAP(VascularObj, dims = c(1:30))
+```
+
+
+```{r}
+DimPlot(VascularObj, group.by = "orig.ident")
+```
+
+```{r}
+saveRDS(VascularObj, "~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/VascularObj_Unintegrated.RDS")
+```
+
+
+
+
+```{r}
+library(harmony)
+VascularObj$samples <- as.factor(VascularObj$orig.ident)
+VascularObj$samples <- as.character(VascularObj$samples)
+
+Vascular_IntegratedObj <- RunHarmony(object = VascularObj,
+                                     group.by.vars= "samples",
+                                     verbose = T, assay.use= "RNA",max.iter.harmony = 100)
+
+### Determining the number of significant PCs
+pct <- Vascular_IntegratedObj@reductions$harmony@stdev / sum(Vascular_IntegratedObj@reductions$harmony@stdev) * 100
+cum <- cumsum(pct)
+co1 <- which(cum > 90 & pct < 5)[1]
+co2 <- sort(which((pct[1:length(pct) -1] - pct[2:length(pct)]) > 0.05), decreasing = T)[1] + 1
+pcs = min(co1, co2)
+harmony_vasc_sig_pcs <- 1:pcs
+harmony_vasc_sig_pcs
+
+Vascular_IntegratedObj <- RunUMAP(Vascular_IntegratedObj,
+                                  dims = c(1:30),
+                                  reduction = "harmony", verbose = T)
+```
+
+## Quality of the integration
+```{r}
+DimPlot(Vascular_IntegratedObj, group.by = "orig.ident") + NoLegend()
+```
+
+
+```{r}
+Vascular_IntegratedObj <- FindNeighbors(Vascular_IntegratedObj,
+                                        dims = c(1:30),
+                                        reduction = "harmony", verbose = T)
+```
+
+
+```{r}
+res <- seq(0.1, 1, 0.1)
+Vascular_IntegratedObj <- FindClusters(Vascular_IntegratedObj,
+                                       resolution = res)
+```
+
+
+```{r, fig.width=12}
+library(clustree)
+clustree(Vascular_IntegratedObj)
+```
+
+
+
+```{r, fig.width=20, fig.height=10}
+DimPlot(Vascular_IntegratedObj, 
+         group.by = grep(pattern = "^RNA_snn", 
+                         x = colnames(Vascular_IntegratedObj@meta.data)), 
+         label = T, ncol = 5) & NoLegend()
+```
+
+
+## Signature plots
+```{r}
+ECs_markers_ref <- xlsx::read.xlsx("/home/mhassan/Files/Vascular_markers_summary.xlsx", sheetIndex = 1)
+
+ECs_markers_ref <- lapply(ECs_markers_ref, function(x){
+  x <- x[!(is.na(x))]
+})
+```
+
+
+## Assiging signatures
+```{r}
+for (cell_type in names(ECs_markers_ref)) {
+  
+  # Access gene list for the current cell type
+  current_gene_list <- ECs_markers_ref[[cell_type]]
+  
+  # Run AddModuleScore function on the Seurat object for the current cell type's gene list
+  Vascular_IntegratedObj <- AddModuleScore(object = Vascular_IntegratedObj,
+                               features = list(current_gene_list),
+                               name = str_c(cell_type, "signature", sep = "_"),
+                               search = T)
+}
+```
+
+
+```{r}
+colnames(Vascular_IntegratedObj@meta.data) <- gsub(pattern = "_signature1$", 
+                                                   replacement = "_signature", 
+                                                   x=colnames(Vascular_IntegratedObj@meta.data))
+```
+
+```{r}
+pal <- viridis::viridis(n = 10, option = "C", direction = -1)
+```
+
+
+## Plotting signatures
+```{r, fig.width=14, fig.height=14}
+signature_columns <- colnames(Vascular_IntegratedObj@meta.data[grep(pattern = "_signature$",
+                                                                    x = colnames(Vascular_IntegratedObj@meta.data))])
+
+FeaturePlot(
+  Vascular_IntegratedObj,
+  features = signature_columns,
+  cols = pal,
+  ncol = 3
+)
+```
+
+
+```{r, fig.height = 8}
+FeaturePlot(Vascular_IntegratedObj, 
+            features = c("PECAM1", "CDH5", "VWF", "MECOM"))
+```
+
+
+```{r}
+DotPlot(Vascular_IntegratedObj, 
+            features = c("PECAM1", "CDH5", "VWF", "MECOM"), group.by = "RNA_snn_res.0.2")
+```
+
+```{r}
+Idents(Vascular_IntegratedObj) <- Vascular_IntegratedObj$RNA_snn_res.0.2
+```
+
+
+```{r}
+DotPlot(Vascular_IntegratedObj, features = c("MRC1", "CFD", "IL7R", "PLIN1"))
+```
+
+
+```{r, fig.height = 8}
+FeaturePlot(Vascular_IntegratedObj, features = c("MRC1", "CFD", "IL7R", "PLIN1"))
+```
+
+
+
+```{r, eval=FALSE}
+DefaultAssay(Vascular_IntegratedObj) <- "RNA"
+Idents(Vascular_IntegratedObj) <- Vascular_IntegratedObj$RNA_snn_res.0.2
+
+markers_vascular_res02 <- FindAllMarkers(Vascular_IntegratedObj,
+                              only.pos = T)
+
+writexl::write_xlsx(as.data.frame(markers_vascular_res02), "~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/markers_vasc_WRST_onlyPos_res02.xlsx")
+```
+
+
+
+
+```{r}
+new_names = c(
+'0' = 'V',
+'1' = 'C',
+'2' = 'A',
+'3' = 'P',
+'4' = 'SM',
+'5' = 'P',
+'6' = 'S',
+'7' = 'S',
+'8' = 'S',
+'9' = 'LECs',
+'10' = 'C'
+)
+
+Idents(Vascular_IntegratedObj) <- Vascular_IntegratedObj$RNA_snn_res.0.2
+
+Vascular_IntegratedObj$vasc_annotation <- recode(Idents(Vascular_IntegratedObj),
+                                                  !!!new_names)
+```
+
+
+
+
+```{r}
+DimPlot(Vascular_IntegratedObj, group.by = "vasc_annotation", label = T, repel = T)
+```
+
+
+```{r}
+saveRDS(Vascular_IntegratedObj, "~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/Vascular_IntegratedObj.RDS")
+```
+
+
+```{r}
+Idents(Vascular_IntegratedObj) <- "vasc_annotation"
+markers_vasc_aft_ann <- FindAllMarkers(Vascular_IntegratedObj, only.pos = T)
+writexl::write_xlsx(markers_vasc_aft_ann, "~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/Vascular_markers_aft_ann.xlsx")
+```
+
+
+
+```{r}
+save.image("~/GenomeDK/endoCellAtlas/AT_pipeline/Analysis/Doublets/scds/scds_Env.Rdata")
+```
+
+
+
+
+
